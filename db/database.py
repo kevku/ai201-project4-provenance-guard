@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS content (
 )
 """
 
+_CREATE_APPEALS = """
+CREATE TABLE IF NOT EXISTS appeals (
+    appeal_id        TEXT PRIMARY KEY,
+    content_id       TEXT,
+    creator_id       TEXT,
+    creator_reasoning TEXT,
+    appeal_timestamp TEXT,
+    FOREIGN KEY (content_id) REFERENCES content(content_id)
+)
+"""
+
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_DB_PATH)
@@ -33,6 +44,7 @@ def _connect() -> sqlite3.Connection:
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(_CREATE_CONTENT)
+        conn.execute(_CREATE_APPEALS)
         conn.commit()
 
 
@@ -64,6 +76,72 @@ def insert_content(record: dict) -> None:
             ),
         )
         conn.commit()
+
+
+def insert_appeal(record: dict) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO appeals (appeal_id, content_id, creator_id, creator_reasoning, appeal_timestamp)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                record.get("appeal_id"),
+                record.get("content_id"),
+                record.get("creator_id"),
+                record.get("creator_reasoning"),
+                record.get("appeal_timestamp"),
+            ),
+        )
+        conn.commit()
+
+
+def get_appeals() -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                a.appeal_id, a.content_id, a.creator_id, a.creator_reasoning, a.appeal_timestamp,
+                c.text, c.rule_score, c.matched_patterns, c.groq_score, c.groq_reasoning,
+                c.final_score, c.confidence_band, c.label_text, c.timestamp
+            FROM appeals a
+            JOIN content c ON a.content_id = c.content_id
+            WHERE c.appeal_status = 'under_review'
+            """
+        ).fetchall()
+    result = []
+    for row in rows:
+        d = dict(row)
+        try:
+            d["matched_patterns"] = json.loads(d.get("matched_patterns") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            d["matched_patterns"] = []
+        result.append(d)
+    return result
+
+
+def update_appeal_status(content_id: str, status: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE content SET appeal_status = ? WHERE content_id = ?",
+            (status, content_id),
+        )
+        conn.commit()
+
+
+def get_content_by_id(content_id: str) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM content WHERE content_id = ?", (content_id,)
+        ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    try:
+        d["matched_patterns"] = json.loads(d.get("matched_patterns") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        d["matched_patterns"] = []
+    return d
 
 
 def get_log(limit: int = 20) -> list[dict]:
