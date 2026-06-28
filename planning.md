@@ -25,12 +25,12 @@ Parallel structure hits add a small bonus on top, capped at 1.0.
 The signal also returns a list of every matched phrase and pattern — for example `["it's important to note", "—", "not only...but also"]`. This list is stored in SQLite and shown to a human reviewer so they can see exactly what the rule analyzer flagged, not just a number.
 
 **Short text handling:**
-If word count is under 150 words, rule analysis is skipped entirely and the system returns a 400 response:
+If word count is under 40 words, rule analysis is skipped entirely and the system returns a 400 response:
 ```
 "This content is too short for reliable analysis. 
-Submit at least 150 words for a confident result."
+Submit at least 40 words for a confident result."
 ```
-Below 150 words, density math produces meaningless scores — one filler phrase in a short paragraph becomes an inflated density rate that carries no real signal. Real detectors (GPTZero and others) apply the same minimum length floor.
+Below 40 words, density math produces meaningless scores — one filler phrase in a short paragraph becomes an inflated density rate that carries no real signal. Real detectors (GPTZero and others) apply the same minimum length floor.
 
 **Filler phrase list:**
 ```
@@ -74,7 +74,7 @@ sentence pairs within 10% of each other in word count
 - Academic and formal human writing naturally uses parallel structures and transition phrases
 - Marketing copy and corporate communications are full of filler phrases written by humans
 - Em-dash is a legitimate stylistic choice for many human writers
-- Text under 150 words is rejected before scoring runs
+- Text under 40 words is rejected before scoring runs
 
 ---
 
@@ -284,12 +284,21 @@ A creator generates a first draft with an LLM, then rewrites it substantially �
 
 ---
 
-### Edge Case 3: Text Too Short to Score (Under 150 Words)
+### Edge Case 3: Text Too Short to Score (Under 40 Words)
 A creator submits a product tagline, a haiku, a short poem, or a single paragraph. Density-based scoring breaks down at small sample sizes — one filler phrase in 30 words produces an inflated density rate that is not meaningful evidence. Groq also struggles with short text because there is not enough content to evaluate redundancy or idea development across sentences.
 
 **Likely output:** The submission is rejected before the pipeline runs with a message explaining the minimum length requirement. This is consistent with how real AI detectors handle short text — GPTZero and similar tools apply the same floor.
 
 **Why the system handles it this way:** Returning a confident verdict on 50 words would be worse than rejecting the request honestly. Short text is a known failure mode of density-based detection, and graceful rejection is better than a misleading score.
+
+### Edge Case 4: Non-English or Non-Prose Content
+A creator submits text in French, Spanish, or another non-English language. The Python signal returns near-zero scores because the filler phrase list is entirely English — not because the text is human-written, but because the rules don't apply. Groq may still score it meaningfully since it is multilingual, causing a large gap between rule_score and groq_score that triggers the disagreement override and forces "uncertain." The result is not genuinely uncertain — it is just the wrong input type being handled badly.
+
+The same problem applies to code, mathematical proofs, or structured data like JSON or CSV. Neither signal is designed to evaluate these formats and both would produce meaningless scores.
+
+**Likely output:** Uncertain due to signal disagreement, or misleadingly low scores on both signals for non-English text that happens to pattern-match poorly.
+
+**Why the system handles it this way:** Language is detected upfront using the `langdetect` Python library before the pipeline runs. Non-English submissions are rejected with a 400 error:
 
 ---
 
@@ -364,7 +373,7 @@ Creator
   ▼
 ┌──────────────────────┐
 │   Flask API Layer    │── rate limit check ────► 429 if exceeded
-│                      │── word count < 150 ───► 400 too short
+│                      │── word count < 40 ───► 400 too short
 │                      │── word count > 2000 ──► 400 too long
 └──────────┬───────────┘
            │ raw text
@@ -488,7 +497,7 @@ A submission enters the Flask API, passes rate limiting and length validation, t
 
 **What to ask Claude Code to generate:**
 1. Flask app skeleton (`app.py`) with `POST /submit` route, request validation (missing fields, word count floor and ceiling), and a placeholder response structure
-2. `rule_analyzer.py` — the full rule-based signal function returning `rule_score` (float) and `matched_patterns` (list), with the 150-word check at the top
+2. `rule_analyzer.py` — the full rule-based signal function returning `rule_score` (float) and `matched_patterns` (list), with the 40-word check at the top
 
 **How to verify before wiring into the endpoint:**
 Run `rule_analyzer.py` directly on three inputs:
